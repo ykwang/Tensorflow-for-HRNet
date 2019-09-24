@@ -1,7 +1,14 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Oct 11 17:44:31 2018
+@author: shirhe-lyh
+Preprocessing images.
+Copied and Modified from:
+    https://github.com/tensorflow/models/blob/master/research/slim/
+    preprocessing/vgg_preprocessing.py
+"""
 
+import math
 import tensorflow as tf
 
 slim = tf.contrib.slim
@@ -14,17 +21,17 @@ _RESIZE_SIDE_MIN = 256
 _RESIZE_SIDE_MAX = 512
 
 
-def _cutout_one(image,mask_size, p, cutout_inside, mask_color=0):
+
+
+def _cutout_one(image,mask_size=60, p=0.8, cutout_inside=True, mask_color=0):
 
   mask_size_half = mask_size // 2
   offset = 1 if mask_size % 2 == 0 else 0
-  image = np.asarray(image).copy()
 
   if np.random.random() > p:
     return image
 
   h, w = image.shape[:2]
-
   if cutout_inside:
       cxmin, cxmax = mask_size_half, w + offset - mask_size_half
       cymin, cymax = mask_size_half, h + offset - mask_size_half
@@ -44,32 +51,15 @@ def _cutout_one(image,mask_size, p, cutout_inside, mask_color=0):
   ymax = min(h, ymax)
   image[ymin:ymax, xmin:xmax] = mask_color
   return image
-def _cutout(image_list,mask_size, p, cutout_inside, mask_color=0):
+
+def _cutout(image_list,mask_size=60, p=0.8, cutout_inside=True, mask_color=0):
   outputs = []
   for image in image_list:
      outputs.append(_cutout_one(image,mask_size,p,cutout_inside,mask_color))
   return outputs
 
+
 def _crop(image, offset_height, offset_width, crop_height, crop_width):
-  """Crops the given image using the provided offsets and sizes.
-
-  Note that the method doesn't assume we know the input image size but it does
-  assume we know the input image rank.
-
-  Args:
-    image: an image of shape [height, width, channels].
-    offset_height: a scalar tensor indicating the height offset.
-    offset_width: a scalar tensor indicating the width offset.
-    crop_height: the height of the cropped image.
-    crop_width: the width of the cropped image.
-
-  Returns:
-    the cropped (and resized) image.
-
-  Raises:
-    InvalidArgumentError: if the rank is not 3 or if the image dimensions are
-      less than the crop size.
-  """
   original_shape = tf.shape(image)
 
   rank_assertion = tf.Assert(
@@ -94,27 +84,6 @@ def _crop(image, offset_height, offset_width, crop_height, crop_width):
 
 
 def _random_crop(image_list, crop_height, crop_width):
-  """Crops the given list of images.
-
-  The function applies the same crop to each image in the list. This can be
-  effectively applied when there are multiple image inputs of the same
-  dimension such as:
-
-    image, depths, normals = _random_crop([image, depths, normals], 120, 150)
-
-  Args:
-    image_list: a list of image tensors of the same dimension but possibly
-      varying channel.
-    crop_height: the new height.
-    crop_width: the new width.
-
-  Returns:
-    the image_list with cropped images.
-
-  Raises:
-    ValueError: if there are multiple image inputs provided with different size
-      or the images are smaller than the crop dimensions.
-  """
   if not image_list:
     raise ValueError('Empty image_list.')
 
@@ -177,17 +146,6 @@ def _random_crop(image_list, crop_height, crop_width):
 
 
 def _central_crop(image_list, crop_height, crop_width):
-  """Performs central crops of the given image list.
-
-  Args:
-    image_list: a list of image tensors of the same dimension but possibly
-      varying channel.
-    crop_height: the height of the image following the crop.
-    crop_width: the width of the image following the crop.
-
-  Returns:
-    the list of cropped images.
-  """
   outputs = []
   for image in image_list:
     image_height = tf.shape(image)[0]
@@ -201,27 +159,66 @@ def _central_crop(image_list, crop_height, crop_width):
   return outputs
 
 
+def _normalize(image, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
+    """Normalizes an image."""
+    image = tf.to_float(image)
+    return tf.div(tf.div(image, 255.) - mean, std)
+
+
+def _random_rotate(image, rotate_prob=0.5, rotate_angle_max=30, 
+                   interpolation='BILINEAR'):
+    def _rotate():
+        rotate_angle = tf.random_uniform([], minval=-rotate_angle_max,
+                                         maxval=rotate_angle_max, 
+                                         dtype=tf.float32)
+        rotate_angle = tf.div(tf.multiply(rotate_angle, math.pi), 180.)
+        rotated_image = tf.contrib.image.rotate([image], [rotate_angle],
+                                                interpolation=interpolation)
+        return tf.squeeze(rotated_image)
+    
+    rand = tf.random_uniform([], minval=0, maxval=1)
+    return tf.cond(tf.greater(rand, rotate_prob), lambda: image, _rotate)
+
+
+def _border_expand(image, mode='CONSTANT', constant_values=255):
+    
+    shape = tf.shape(image)
+    height = shape[0]
+    width = shape[1]
+    
+    def _pad_left_right():
+        pad_left = tf.floordiv(height - width, 2)
+        pad_right = height - width - pad_left
+        return [[0, 0], [pad_left, pad_right], [0, 0]]
+        
+    def _pad_top_bottom():
+        pad_top = tf.floordiv(width - height, 2)
+        pad_bottom = width - height - pad_top
+        return [[pad_top, pad_bottom], [0, 0], [0, 0]]
+    
+    paddings = tf.cond(tf.greater(height, width),
+                       _pad_left_right,
+                       _pad_top_bottom)
+    expanded_image = tf.pad(image, paddings, mode=mode, 
+                          constant_values=constant_values)
+    return expanded_image
+
+
+def border_expand(image, mode='CONSTANT', constant_values=255,
+                  resize=False, output_height=None, output_width=None,
+                  channels=3):
+    expanded_image = _border_expand(image, mode, constant_values)
+    if resize:
+        if output_height is None or output_width is None:
+            raise ValueError('`output_height` and `output_width` must be '
+                             'specified in the resize case.')
+        expanded_image = _fixed_sides_resize(expanded_image, output_height,
+                                             output_width)
+        expanded_image.set_shape([output_height, output_width, channels])
+    return expanded_image
+        
+
 def _mean_image_subtraction(image, means):
-  """Subtracts the given means from each image channel.
-
-  For example:
-    means = [123.68, 116.779, 103.939]
-    image = _mean_image_subtraction(image, means)
-
-  Note that the rank of `image` must be known.
-
-  Args:
-    image: a tensor of size [height, width, C].
-    means: a C-vector of values to subtract from each channel.
-
-  Returns:
-    the centered image.
-
-  Raises:
-    ValueError: If the rank of `image` is unknown, if `image` has a rank other
-      than three or if the number of channels in `image` doesn't match the
-      number of values in `means`.
-  """
   if image.get_shape().ndims != 3:
     raise ValueError('Input must be of size [height, width, C>0]')
   num_channels = image.get_shape().as_list()[-1]
@@ -235,21 +232,6 @@ def _mean_image_subtraction(image, means):
 
 
 def _smallest_size_at_least(height, width, smallest_side):
-  """Computes new shape with the smallest side equal to `smallest_side`.
-
-  Computes new shape with the smallest side equal to `smallest_side` while
-  preserving the original aspect ratio.
-
-  Args:
-    height: an int32 scalar tensor indicating the current height.
-    width: an int32 scalar tensor indicating the current width.
-    smallest_side: A python integer or scalar `Tensor` indicating the size of
-      the smallest side after resize.
-
-  Returns:
-    new_height: an int32 scalar tensor indicating the new height.
-    new_width: and int32 scalar tensor indicating the new width.
-  """
   smallest_side = tf.convert_to_tensor(smallest_side, dtype=tf.int32)
 
   height = tf.to_float(height)
@@ -265,16 +247,6 @@ def _smallest_size_at_least(height, width, smallest_side):
 
 
 def _aspect_preserving_resize(image, smallest_side):
-  """Resize images preserving the original aspect ratio.
-
-  Args:
-    image: A 3-D image `Tensor`.
-    smallest_side: A python integer or scalar `Tensor` indicating the size of
-      the smallest side after resize.
-
-  Returns:
-    resized_image: A 3-D tensor containing the resized image.
-  """
   smallest_side = tf.convert_to_tensor(smallest_side, dtype=tf.int32)
 
   shape = tf.shape(image)
@@ -289,84 +261,90 @@ def _aspect_preserving_resize(image, smallest_side):
   return resized_image
 
 
+def _fixed_sides_resize(image, output_height, output_width):
+    output_height = tf.convert_to_tensor(output_height, dtype=tf.int32)
+    output_width = tf.convert_to_tensor(output_width, dtype=tf.int32)
+
+    image = tf.expand_dims(image, 0)
+    resized_image = tf.image.resize_nearest_neighbor(
+        image, [output_height, output_width], align_corners=False)
+    resized_image = tf.squeeze(resized_image)
+    resized_image.set_shape([None, None, 3])
+    return resized_image
+
+
 def preprocess_for_train(image,
                          output_height,
                          output_width,
                          resize_side_min=_RESIZE_SIDE_MIN,
-                         resize_side_max=_RESIZE_SIDE_MAX):
-  """Preprocesses the given image for training.
+                         resize_side_max=_RESIZE_SIDE_MAX,
+                         border_expand=False, normalize=False,cutout=False,
+                         preserving_aspect_ratio_resize=True):
+  image = _random_rotate(image, rotate_angle_max=20)
+  if border_expand:
+      image = _border_expand(image)
+  if preserving_aspect_ratio_resize:
+      resize_side = tf.random_uniform(
+          [], minval=resize_side_min, maxval=resize_side_max+1, dtype=tf.int32)
 
-  Note that the actual resizing scale is sampled from
-    [`resize_size_min`, `resize_size_max`].
-
-  Args:
-    image: A `Tensor` representing an image of arbitrary size.
-    output_height: The height of the image after preprocessing.
-    output_width: The width of the image after preprocessing.
-    resize_side_min: The lower bound for the smallest side of the image for
-      aspect-preserving resizing.
-    resize_side_max: The upper bound for the smallest side of the image for
-      aspect-preserving resizing.
-
-  Returns:
-    A preprocessed image.
-  """
-  resize_side = tf.random_uniform(
-      [], minval=resize_side_min, maxval=resize_side_max+1, dtype=tf.int32)
-
-  image = _aspect_preserving_resize(image, resize_side)
+      image = _aspect_preserving_resize(image, resize_side)
+  else:
+      image = _fixed_sides_resize(image, resize_side_min, resize_side_min)
   image = _random_crop([image], output_height, output_width)[0]
   image.set_shape([output_height, output_width, 3])
   image = tf.to_float(image)
   image = tf.image.random_flip_left_right(image)
-  #image = _cutout(image,mask_size = 4, p = 0.6, cutout_inside=True, mask_color=0)
-  return _mean_image_subtraction(image, [_R_MEAN, _G_MEAN, _B_MEAN])
+  if normalize:
+      image =  _normalize(image)
+  else:
+      image = _mean_image_subtraction(image, [_R_MEAN, _G_MEAN, _B_MEAN])
+  if cutout:
+      image = _cutout_one(image)
+  return image
 
 
-def preprocess_for_eval(image, output_height, output_width, resize_side):
-  """Preprocesses the given image for evaluation.
-
-  Args:
-    image: A `Tensor` representing an image of arbitrary size.
-    output_height: The height of the image after preprocessing.
-    output_width: The width of the image after preprocessing.
-    resize_side: The smallest side of the image for aspect-preserving resizing.
-
-  Returns:
-    A preprocessed image.
-  """
-  image = _aspect_preserving_resize(image, resize_side)
+def preprocess_for_eval(image, output_height, output_width, resize_side,
+                        border_expand=False, normalize=False,
+                        preserving_aspect_ratio_resize=True):
+  if border_expand:
+      image = _border_expand(image)
+  if preserving_aspect_ratio_resize:
+      image = _aspect_preserving_resize(image, resize_side)
+  else:
+      image = _fixed_sides_resize(image, resize_side, resize_side)
   image = _central_crop([image], output_height, output_width)[0]
   image.set_shape([output_height, output_width, 3])
   image = tf.to_float(image)
+  if normalize:
+      return _normalize(image)
   return _mean_image_subtraction(image, [_R_MEAN, _G_MEAN, _B_MEAN])
 
 
 def preprocess_image(image, output_height, output_width, is_training=False,
                      resize_side_min=_RESIZE_SIDE_MIN,
-                     resize_side_max=_RESIZE_SIDE_MAX):
-  """Preprocesses the given image.
-
-  Args:
-    image: A `Tensor` representing an image of arbitrary size.
-    output_height: The height of the image after preprocessing.
-    output_width: The width of the image after preprocessing.
-    is_training: `True` if we're preprocessing the image for training and
-      `False` otherwise.
-    resize_side_min: The lower bound for the smallest side of the image for
-      aspect-preserving resizing. If `is_training` is `False`, then this value
-      is used for rescaling.
-    resize_side_max: The upper bound for the smallest side of the image for
-      aspect-preserving resizing. If `is_training` is `False`, this value is
-      ignored. Otherwise, the resize side is sampled from
-        [resize_size_min, resize_size_max].
-
-  Returns:
-    A preprocessed image.
-  """
+                     resize_side_max=_RESIZE_SIDE_MAX,
+                     border_expand=False, normalize=False,cutout=False,
+                     preserving_aspect_ratio_resize=True):
   if is_training:
     return preprocess_for_train(image, output_height, output_width,
-                                resize_side_min, resize_side_max)
+                                resize_side_min, resize_side_max,
+                                border_expand, normalize,cutout,
+                                preserving_aspect_ratio_resize)
   else:
     return preprocess_for_eval(image, output_height, output_width,
-                               resize_side_min)
+                               resize_side_min, border_expand, normalize,
+                               preserving_aspect_ratio_resize)
+    
+    
+def preprocess_images(images, output_height, output_width, is_training=False,
+                     resize_side_min=_RESIZE_SIDE_MIN,
+                     resize_side_max=_RESIZE_SIDE_MAX,
+                     border_expand=False, normalize=False,cutout=False,
+                     preserving_aspect_ratio_resize=True):
+    images = tf.cast(images, tf.float32)
+    def _preprocess_image(image):
+        return preprocess_image(image, output_height, output_width,
+                                is_training, resize_side_min,
+                                resize_side_max, border_expand, normalize,cutout,
+                                preserving_aspect_ratio_resize)
+    return tf.map_fn(_preprocess_image, elems=images)

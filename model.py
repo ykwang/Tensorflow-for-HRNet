@@ -9,15 +9,29 @@ import tensorflow as tf
 from tensorflow.contrib.slim import nets
 
 import preprocessing
+from resnet import resnet32,resnet50,resnet101,resnet152
+from mobilenet import mobilenet
+from inception import inception_v3,inception_v4,inception_resnet_v2
+from hrnet import hr_resnet18,hr_resnet48,hr_resnet64
 
 slim = tf.contrib.slim
-    
+
+backbone_fn = {'resnet32': resnet32,
+                'resnet50': resnet50,
+                'resnet101': resnet101,
+                'resnet152': resnet152,
+                'inception_v3': inception_v3,
+                'inception_v4':inception_v4,
+                'inception_resnet_v2':inception_resnet_v2,
+                'mobilenet':mobilenet,
+                'hr_resnet18': hr_resnet18,
+                'hr_resnet48': hr_resnet48,
+                'hr_resnet64': hr_resnet64}
+
         
 class Model(object):
     
-    def __init__(self, num_classes, is_training,
-                 fixed_resize_side=368,
-                 default_image_size=299):
+    def __init__(self, num_classes, is_training,backbone):
         """Constructor.
         
         Args:
@@ -29,12 +43,14 @@ class Model(object):
         self._is_training = is_training
         self._fixed_resize_side = fixed_resize_side
         self._default_image_size = default_image_size
+        self._backbone = backbone
         
     @property
     def num_classes(self):
         return self._num_classes
         
-    def preprocess(self, inputs):
+    def preprocess(self, inputs,fixed_resize_side=224,
+                 default_image_size=224):
         """preprocessing.
         
         Outputs of this function can be passed to loss or postprocess functions.
@@ -48,11 +64,11 @@ class Model(object):
                 passed to the Loss or Postprocess functions.
         """
         preprocessed_inputs = preprocessing.preprocess_images(
-            inputs, self._default_image_size, self._default_image_size, 
-            resize_side_min=self._fixed_resize_side,
+            inputs, default_image_size, default_image_size, 
+            resize_side_min=fixed_resize_side,
             is_training=self._is_training,
-            border_expand=True, normalize=False,
-            preserving_aspect_ratio_resize=False)
+            border_expand=True, normalize=True,cutout=True,
+            preserving_aspect_ratio_resize=True)
         preprocessed_inputs = tf.cast(preprocessed_inputs, tf.float32)
         return preprocessed_inputs
     
@@ -69,13 +85,10 @@ class Model(object):
             prediction_dict: A dictionary holding prediction tensors to be
                 passed to the Loss or Postprocess functions.
         """
-        with slim.arg_scope(nets.resnet_v1.resnet_arg_scope()):
-            net, endpoints = nets.resnet_v1.resnet_v1_50(
-                preprocessed_inputs, num_classes=None,
+        logits, endpoints = backbone_fn[self._backbone](
+                preprocessed_inputs, num_classes=self.num_classes,
                 is_training=self._is_training)
-        net = tf.squeeze(net, axis=[1, 2])
-        logits = slim.fully_connected(net, num_outputs=self.num_classes,
-                                      activation_fn=None, scope='Predict')
+        
         prediction_dict = {'logits': logits}
         return prediction_dict
     

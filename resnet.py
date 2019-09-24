@@ -12,7 +12,7 @@ from tensorflow.contrib.slim.nets import resnet_v2
 slim = tf.contrib.slim
 
 
-def resnet_v2_32(inputs, num_classes, is_training, global_pool = True,data_format="channels_first"):
+def resnet32(inputs, num_classes, is_training, global_pool = True,data_format="channels_first"):
   with slim.arg_scope(resnet_v2.resnet_arg_scope()):
     logits, end_points = resnet_v2.resnet_v2_32(inputs,
                                                 num_classes,
@@ -26,7 +26,7 @@ def resnet_v2_32(inputs, num_classes, is_training, global_pool = True,data_forma
     return logits, predictions
 
 
-def resnet_v2_50(inputs, num_classes, is_training, global_pool = True,data_format="channels_first"):
+def resnet50(inputs, num_classes, is_training, global_pool = True,data_format="channels_first"):
   with slim.arg_scope(resnet_v2.resnet_arg_scope()):
     logits, end_points = resnet_v2.resnet_v2_50(inputs,
                                                 num_classes,
@@ -39,7 +39,7 @@ def resnet_v2_50(inputs, num_classes, is_training, global_pool = True,data_forma
 
     return logits, predictions
 
-def resnet_v2_101(inputs, num_classes, is_training, global_pool = True,data_format="channels_first"):
+def resnet101(inputs, num_classes, is_training, global_pool = True,data_format="channels_first"):
   with slim.arg_scope(resnet_v2.resnet_arg_scope()):
     logits, end_points = resnet_v2.resnet_v2_101(inputs,
                                                 num_classes,
@@ -52,7 +52,7 @@ def resnet_v2_101(inputs, num_classes, is_training, global_pool = True,data_form
 
     return logits, predictions
 
-def resnet_v2_152(inputs, num_classes, is_training, global_pool = True,data_format="channels_first"):
+def resnet152(inputs, num_classes, is_training, global_pool = True,data_format="channels_first"):
   with slim.arg_scope(resnet_v2.resnet_arg_scope()):
     logits, end_points = resnet_v2.resnet_v2_152(inputs,
                                                 num_classes,

@@ -14,16 +14,26 @@ python3 train.py \
 """
 
 import os
+import pandas as pd
 import tensorflow as tf
 from tensorflow.python.training import saver as saver_lib
 
 import model
 import preprocessing
+import datasetprovider
 
 slim = tf.contrib.slim
 flags = tf.app.flags
 
-flags.DEFINE_string('record_path','./training', 
+flags.DEFINE_string('images_dir', 
+                    '/data/iNat', 
+                    '')
+flags.DEFINE_string('annotation_path', 
+                    'train2019.json',
+                    'Path to annotation`s .json file.')
+flags.DEFINE_string('backbone','resnet50', 
+                    'The basic model')
+flags.DEFINE_string('record_path',None, 
                     '')
 flags.DEFINE_string('checkpoint_path', './checkpoint',
                     '')
@@ -38,9 +48,11 @@ flags.DEFINE_float(
     'each clone will go over full epoch individually, but replicas will go '
     'once across all replicas.')
 flags.DEFINE_integer('num_samples', 32739, 'Number of samples.')
-flags.DEFINE_integer('num_classes', 61, 'Number of classes')
+flags.DEFINE_integer('num_classes', 1010, 'Number of classes')
 flags.DEFINE_integer('num_steps', 10000, 'Number of steps.')
 flags.DEFINE_integer('batch_size', 48, 'Batch size')
+flags.DEFINE_integer('image_width', 224, 'width')
+flags.DEFINE_integer('image_height', 224, 'height')
 
 FLAGS = flags.FLAGS
 
@@ -79,7 +91,7 @@ def get_record_dataset(record_path,
 
     #Actually create the dataset
     dataset = slim.dataset.Dataset(
-        data_sources = file_pattern_path,
+        data_sources = record_path,
         decoder = decoder,
         reader = reader,
         num_readers = 4,
@@ -152,7 +164,7 @@ def get_init_fn():
         variables_to_restore,
         ignore_missing_vars=True)
 
-def load_batch(dataset, batch_size, height=image_size, width=image_size, is_training=True):
+def load_batch(dataset, batch_size, height, width, is_training=True):
 
     data_provider = slim.dataset_data_provider.DatasetDataProvider(dataset)
     image, label = data_provider.get(['image', 'label'])
@@ -163,26 +175,58 @@ def load_batch(dataset, batch_size, height=image_size, width=image_size, is_trai
     inputs, labels = tf.train.batch([image, label],
                                     batch_size=FLAGS.batch_size,
                                     #capacity=5*FLAGS.batch_size,
-                                    allow_smaller_final_batch=True)
+ 
+                                   allow_smaller_final_batch=True)
+
+def get_datalist(images_dir,annotation_path):
+
+    if not os.path.exists(annotation_path):
+        raise ValueError('`annotation_path` does not exist.')
+        
+    annotation_json = open(annotation_path, 'r')
+    annotation_list = json.load(annotation_json)
+    image_files = []
+    
+    anns_df = pd.DataFrame(annotation_list['annotations'])[['image_id','category_id']]
+    img_df = pd.DataFrame(annotation_list['images'])[['id', 'file_name']].rename(columns={'id':'image_id'})
+    df= pd.merge(img_df, anns_df, on='image_id')
+
+    df['file_name']  = images_dir + df['file_name']
+
+    return df['file_name'],df['category_id']
 
 def main(_):
     # Specify which gpu to be used
     os.environ["CUDA_VISIBLE_DEVICES"] = '0'
     
     num_samples = FLAGS.num_samples
-    dataset = get_record_dataset(FLAGS.record_path, num_samples=num_samples, 
+    inputs = None
+    labels = None
+    if FLAGS.record_path==None:
+        dataset = get_record_dataset(FLAGS.record_path, num_samples=num_samples, 
                                  num_classes=FLAGS.num_classes)
     
-    inputs, labels = load_batch(dataset, FLAGS.batch_size)
-    cls_model = model.Model(is_training=True, num_classes=FLAGS.num_classes)
-    
-    one_hot_labels = slim.one_hot_encoding(labels, FLAGS.num_classes)
+        inputs, labels = load_batch(dataset, FLAGS.batch_size,FLAGS.image_width,FLAGS.image_height)
+
+    else:
+        image_list,labels = get_datalist(FLAGS.images_dir,FLAGS.annotation_path)
+
+        dataset = datasetprovider(image_list,labels,FLAGS.num_classes,True,True,True)
+
+        inputs, labels = dataset.next_batch(FLAGS.batch_size,FLAGS.image_width,FLAGS.image_height)
+
+    cls_model = model.Model(is_training=True, num_classes=FLAGS.num_classes,
+                backbone=FLAGS.backbone)
+
+    if FLAGS.record_path==None:
+        inputs = model.preprocessing(inputs,fixed_resize_side=FLAGS.image_width,
+                 default_image_size=FLAGS.image_width)
 
     prediction_dict = cls_model.predict(inputs)
-    loss_dict = cls_model.loss(prediction_dict, one_hot_labels)
+    loss_dict = cls_model.loss(prediction_dict, labels)
     loss = loss_dict['loss']
     postprocessed_dict = cls_model.postprocess(prediction_dict)
-    acc = cls_model.accuracy(postprocessed_dict, one_hot_labels)
+    acc = cls_model.accuracy(postprocessed_dict, labels)
     tf.summary.scalar('loss', loss)
     tf.summary.scalar('accuracy', acc)
 
