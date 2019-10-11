@@ -18,14 +18,16 @@ import io
 import tensorflow as tf
 import pandas as pd
 from PIL import Image
+import json
+import os
 
 flags = tf.app.flags
 
 flags.DEFINE_string('images_dir', 
-                    '/data/iNat', 
+                    '', 
                     '')
 flags.DEFINE_string('annotation_path', 
-                    'train2019.json',
+                    '',
                     'Path to annotation`s .json file.')
 flags.DEFINE_string('output_path', 
                     '/train.record',
@@ -55,16 +57,18 @@ def provide(annotation_path=None, images_dir=None):
         
     annotation_json = open(annotation_path, 'r')
     annotation_list = json.load(annotation_json)
-    image_files = []
+    annotation_dict = {}
     
     anns_df = pd.DataFrame(annotation_list['annotations'])[['image_id','category_id']]
     img_df = pd.DataFrame(annotation_list['images'])[['id', 'file_name']].rename(columns={'id':'image_id'})
     df= pd.merge(img_df, anns_df, on='image_id')
-    df['category_id']=df['category_id'].astype(str)
+    df['category_id']=df['category_id'].astype(int)
 
-    df['file_name']  = images_dir + df['file_name']
-    annotation_dict = dict([(_file,[int(_id)]) for _file,_id in zip(df.file_name, df.category_id)])
-    return image_files, annotation_dict
+    df['file_name'] = images_dir + df['file_name']
+
+    annotation_dict = dict(zip(df['file_name'], df['category_id']))
+
+    return annotation_dict
 
 def int64_feature(value):
     return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
@@ -111,7 +115,7 @@ def create_tf_example(image_path, label, resize_size=None):
         features=tf.train.Features(feature={
             'image/encoded': bytes_feature(encoded_jpg),
             'image/format': bytes_feature('jpg'.encode()),
-            'image/class/label': int64_list_feature(label),
+            'image/class/label': int64_feature(label),
             'image/height': int64_feature(height),
             'image/width': int64_feature(width)}))
     return tf_example
@@ -140,7 +144,7 @@ def main(_):
     record_path = FLAGS.output_path
     resize_size = FLAGS.resize_side_size
     
-    _, annotation_dict = provide(annotation_path, images_dir)
+    annotation_dict = provide(annotation_path, images_dir)
     
     generate_tfrecord(annotation_dict, record_path, resize_size)
     

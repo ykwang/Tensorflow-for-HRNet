@@ -20,7 +20,6 @@ from tensorflow.python.training import saver as saver_lib
 
 import model
 import preprocessing
-import datasetprovider
 
 slim = tf.contrib.slim
 flags = tf.app.flags
@@ -88,7 +87,9 @@ def get_record_dataset(record_path,
 
     #Create the labels_to_name file
     labels_to_name_dict = None
-
+    items_to_descriptions = {
+        'image': 'An image with shape image_shape.',
+        'label': 'A single integer.'}
     #Actually create the dataset
     dataset = slim.dataset.Dataset(
         data_sources = record_path,
@@ -164,68 +165,38 @@ def get_init_fn():
         variables_to_restore,
         ignore_missing_vars=True)
 
-def load_batch(dataset, batch_size, height, width, is_training=True):
+def load_batch(dataset, batch_size, height, width,num_classes):
 
     data_provider = slim.dataset_data_provider.DatasetDataProvider(dataset)
     image, label = data_provider.get(['image', 'label'])
     
     # Border expand and resize
-    image = preprocessing.preprocessing_fn(image, height, width, is_training)
+    image = preprocessing.border_expand(image, output_height=height, output_width=width)
         
     inputs, labels = tf.train.batch([image, label],
-                                    batch_size=FLAGS.batch_size,
-                                    #capacity=5*FLAGS.batch_size,
- 
-                                   allow_smaller_final_batch=True)
-
-def get_datalist(images_dir,annotation_path):
-
-    if not os.path.exists(annotation_path):
-        raise ValueError('`annotation_path` does not exist.')
-        
-    annotation_json = open(annotation_path, 'r')
-    annotation_list = json.load(annotation_json)
-    image_files = []
-    
-    anns_df = pd.DataFrame(annotation_list['annotations'])[['image_id','category_id']]
-    img_df = pd.DataFrame(annotation_list['images'])[['id', 'file_name']].rename(columns={'id':'image_id'})
-    df= pd.merge(img_df, anns_df, on='image_id')
-
-    df['file_name']  = images_dir + df['file_name']
-
-    return df['file_name'],df['category_id']
+                                    batch_size=batch_size,
+                                    allow_smaller_final_batch=True)
+    labels = slim.one_hot_encoding(labels,num_classes)
+    return inputs,labels
 
 def main(_):
     # Specify which gpu to be used
     os.environ["CUDA_VISIBLE_DEVICES"] = '0'
     
     num_samples = FLAGS.num_samples
-    inputs = None
-    labels = None
-    if FLAGS.record_path==None:
-        dataset = get_record_dataset(FLAGS.record_path, num_samples=num_samples, 
+    dataset = get_record_dataset(FLAGS.record_path, num_samples=num_samples, 
                                  num_classes=FLAGS.num_classes)
     
-        inputs, labels = load_batch(dataset, FLAGS.batch_size,FLAGS.image_width,FLAGS.image_height)
-
-    else:
-        image_list,labels = get_datalist(FLAGS.images_dir,FLAGS.annotation_path)
-
-        dataset = datasetprovider(image_list,labels,FLAGS.num_classes,True,True,True)
-
-        inputs, labels = dataset.next_batch(FLAGS.batch_size,FLAGS.image_width,FLAGS.image_height)
+    inputs, labels = load_batch(dataset, FLAGS.batch_size,FLAGS.image_width,FLAGS.image_height,FLAGS.num_classes)
 
     cls_model = model.Model(is_training=True, num_classes=FLAGS.num_classes,
                 backbone=FLAGS.backbone)
 
-    if FLAGS.record_path==None:
-        inputs = model.preprocessing(inputs,fixed_resize_side=FLAGS.image_width,
-                 default_image_size=FLAGS.image_width)
-
-    prediction_dict = cls_model.predict(inputs)
-    loss_dict = cls_model.loss(prediction_dict, labels)
-    loss = loss_dict['loss']
+    preinputs = cls_model.preprocess(inputs)
+    prediction_dict = cls_model.predict(preinputs)
     postprocessed_dict = cls_model.postprocess(prediction_dict)
+    loss_dict = cls_model.loss(postprocessed_dict, labels, is_label_smoothing=True)
+    loss = loss_dict['loss']
     acc = cls_model.accuracy(postprocessed_dict, labels)
     tf.summary.scalar('loss', loss)
     tf.summary.scalar('accuracy', acc)
@@ -238,14 +209,12 @@ def main(_):
     train_op = slim.learning.create_train_op(loss, optimizer,
                                              summarize_gradients=True)
     tf.summary.scalar('learning_rate', learning_rate)
-    
-    saver = saver_lib.Saver()
 
     init_fn = get_init_fn()
     
     slim.learning.train(train_op=train_op, logdir=FLAGS.logdir,
                         init_fn=init_fn, number_of_steps=FLAGS.num_steps,
-                        save_summaries_secs=20, saver=saver,
+                        save_summaries_secs=20,
                         save_interval_secs=600)
     
 if __name__ == '__main__':

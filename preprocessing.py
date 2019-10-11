@@ -10,6 +10,7 @@ Copied and Modified from:
 
 import math
 import tensorflow as tf
+import numpy as np
 
 slim = tf.contrib.slim
 
@@ -20,9 +21,6 @@ _B_MEAN = 103.94
 _RESIZE_SIDE_MIN = 256
 _RESIZE_SIDE_MAX = 512
 
-
-
-
 def _cutout_one(image,mask_size=60, p=0.8, cutout_inside=True, mask_color=0):
 
   mask_size_half = mask_size // 2
@@ -31,13 +29,16 @@ def _cutout_one(image,mask_size=60, p=0.8, cutout_inside=True, mask_color=0):
   if np.random.random() > p:
     return image
 
-  h, w = image.shape[:2]
+  w, h, c= image.shape[:3]
+
+  mask = np.ones((w, h, c), np.float32)
+
   if cutout_inside:
       cxmin, cxmax = mask_size_half, w + offset - mask_size_half
       cymin, cymax = mask_size_half, h + offset - mask_size_half
   else:
-      cxmin, cxmax = 0, w + self.offset
-      cymin, cymax = 0, h + self.offset
+      cxmin, cxmax = 0, w + offset
+      cymin, cymax = 0, h + offset
 
   cx = np.random.randint(cxmin, cxmax)
   cy = np.random.randint(cymin, cymax)
@@ -49,7 +50,10 @@ def _cutout_one(image,mask_size=60, p=0.8, cutout_inside=True, mask_color=0):
   ymin = max(0, ymin)
   xmax = min(w, xmax)
   ymax = min(h, ymax)
-  image[ymin:ymax, xmin:xmax] = mask_color
+  mask[ymin:ymax, xmin:xmax,:] = mask_color
+
+  mask = tf.convert_to_tensor(mask)
+  image = image * mask
   return image
 
 def _cutout(image_list,mask_size=60, p=0.8, cutout_inside=True, mask_color=0):

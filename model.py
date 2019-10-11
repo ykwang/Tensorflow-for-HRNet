@@ -9,21 +9,20 @@ import tensorflow as tf
 from tensorflow.contrib.slim import nets
 
 import preprocessing
-from resnet import resnet32,resnet50,resnet101,resnet152
+from resnet import resnet50,resnet101,resnet152
 from mobilenet import mobilenet
-from inception import inception_v3,inception_v4,inception_resnet_v2
+from inception import inceptionv3,inceptionv4,inception_resnet
 from hrnet import hr_resnet18,hr_resnet48,hr_resnet64
 
 slim = tf.contrib.slim
 
-backbone_fn = {'resnet32': resnet32,
-                'resnet50': resnet50,
+backbone_fn = {'resnet50': resnet50,
                 'resnet101': resnet101,
                 'resnet152': resnet152,
-                'inception_v3': inception_v3,
-                'inception_v4':inception_v4,
-                'inception_resnet_v2':inception_resnet_v2,
-                'mobilenet':mobilenet,
+                'inception_v3': inceptionv3,
+                'inception_v4':inceptionv4,
+                'inception_resnet_v2': inception_resnet,
+                'mobilenet': mobilenet,
                 'hr_resnet18': hr_resnet18,
                 'hr_resnet48': hr_resnet48,
                 'hr_resnet64': hr_resnet64}
@@ -41,8 +40,6 @@ class Model(object):
         """
         self._num_classes = num_classes
         self._is_training = is_training
-        self._fixed_resize_side = fixed_resize_side
-        self._default_image_size = default_image_size
         self._backbone = backbone
         
     @property
@@ -110,7 +107,7 @@ class Model(object):
                               'classes': classes}
         return postprocessed_dict
     
-    def loss(self, prediction_dict, groundtruth_lists):
+    def loss(self, postprocessed_dict, groundtruth_lists,is_label_smoothing=False):
         """Compute scalar loss tensors with respect to provided groundtruth.
         
         Args:
@@ -122,10 +119,11 @@ class Model(object):
             A dictionary mapping strings (loss names) to scalar tensors
                 representing loss values.
         """
-        logits = prediction_dict['logits']
-        slim.losses.sparse_softmax_cross_entropy(
-            logits=logits, 
-            labels=groundtruth_lists,
+        logits = postprocessed_dict['logits']
+        slim.losses.softmax_cross_entropy(
+            logits, 
+            groundtruth_lists,
+            label_smoothing=is_label_smoothing,
             scope='Loss')
         loss = slim.losses.get_total_loss()
         loss_dict = {'loss': loss}
@@ -144,6 +142,7 @@ class Model(object):
             accuracy: The scalar accuracy.
         """
         classes = postprocessed_dict['classes']
+        groundtruth = tf.argmax(groundtruth_lists, 1)
         accuracy = tf.reduce_mean(
-            tf.cast(tf.equal(classes, groundtruth_lists), dtype=tf.float32))
+            tf.cast(tf.equal(classes, groundtruth), dtype=tf.float32))
         return accuracy

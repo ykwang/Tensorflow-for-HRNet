@@ -473,27 +473,23 @@ class HighResolutionNet(object):
         # Classification Head
         y = self._image2head(y_list, pre_stage_channels)
 
-        with tf.variable_scope('Logits',reuse=self.reuse):
-            kernel_size = y.get_shape()[1:3]
-            if kernel_size.is_fully_defined():
-                y = slim.avg_pool2d(y, kernel_size, padding='VALID',
+        kernel_size = y.get_shape()[1:3]
+        if kernel_size.is_fully_defined():
+            y = slim.avg_pool2d(y, kernel_size, padding='VALID',
                                 scope='AvgPool_1a_8x8')
-            else:
+        else:
                 y = tf.reduce_mean(y, [1, 2], keep_dims=True, name='global_pool')
-            self.end_points['global_pool'] = y
-            y = slim.flatten(y)
-            y = slim.dropout(y, dropout_keep_prob, is_training= self.training,
+        self.end_points['global_pool'] = y
+        y = slim.flatten(y)
+        y = slim.dropout(y, dropout_keep_prob, is_training= self.training,
                            scope='Dropout')
-            self.end_points['PreLogits'] = y
-            y = slim.fully_connected(y, num_classes, activation_fn=None,
+        self.end_points['PreLogits'] = y
+        y = slim.fully_connected(y, num_classes, activation_fn=None,
                                       scope='Logits')
         self.end_points['Logits'] = y
         self.end_points['Predictions'] = self.prediction_fn(y, 'Predictions')
 
         return y, self.end_points
-
-    def init_weights(self, pretrained=''):
-        logger.info('=> init weights from normal distribution')
 
 
 def hr_resnet18(pretrained=False, is_training=True, **kwargs):
@@ -527,7 +523,6 @@ def hr_resnet18(pretrained=False, is_training=True, **kwargs):
     }
     }
     model = HighResolutionNet(cfg, is_training, **kwargs)
-    model.init_weights()
     return model
 
 
@@ -600,7 +595,7 @@ def hr_resnet64(pretrained=False, is_training=True, **kwargs):
     # model.init_weights()
     return model
 
-def hrnet_v2_arg_scope(
+def hrnet_arg_scope(
     weight_decay=0.00004,
     batch_norm_decay=0.9997,
     batch_norm_epsilon=0.001,
